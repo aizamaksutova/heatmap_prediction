@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import wandb
 from transformers import AutoProcessor
 
 from data import HeatmapMolmoDataset, collate_heatmap_batch
@@ -97,12 +98,24 @@ def main() -> None:
     parser.add_argument("--resume", default=None)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--amp", action="store_true")
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb-project", default="molmo-heatmap")
+    parser.add_argument("--wandb-run-name", default=None)
+    parser.add_argument("--wandb-entity", default=None)
     args = parser.parse_args()
 
     use_lora = args.lora or not args.no_lora
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.wandb:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name,
+            entity=args.wandb_entity,
+            config=vars(args),
+        )
 
     processor = AutoProcessor.from_pretrained(
         args.model_name,
@@ -195,6 +208,17 @@ def main() -> None:
             train_losses.append(metrics["total"])
             progress.set_postfix({"loss": f"{metrics['total']:.4f}"})
             global_step += 1
+            if args.wandb:
+                wandb.log(
+                    {
+                        "train/loss_total": metrics["total"],
+                        "train/loss_bce": metrics["bce"],
+                        "train/loss_iou": metrics["iou"],
+                        "train/step": global_step,
+                        "train/epoch": epoch + 1,
+                    },
+                    step=global_step,
+                )
 
         model.eval()
         val_losses = []
@@ -214,6 +238,17 @@ def main() -> None:
                 )
                 val_losses.append(metrics["total"])
                 progress.set_postfix({"loss": f"{metrics['total']:.4f}"})
+                if args.wandb:
+                    wandb.log(
+                        {
+                            "val/loss_total": metrics["total"],
+                            "val/loss_bce": metrics["bce"],
+                            "val/loss_iou": metrics["iou"],
+                            "val/step": global_step,
+                            "val/epoch": epoch + 1,
+                        },
+                        step=global_step,
+                    )
 
         epoch_dir = output_dir / f"epoch_{epoch+1}"
         if (epoch + 1) % args.save_every == 0:
@@ -233,6 +268,15 @@ def main() -> None:
             "val_loss": float(sum(val_losses) / max(1, len(val_losses))),
         }
         (epoch_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+        if args.wandb:
+            wandb.log(
+                {
+                    "epoch/train_loss": summary["train_loss"],
+                    "epoch/val_loss": summary["val_loss"],
+                    "epoch": epoch + 1,
+                },
+                step=global_step,
+            )
 
 
 if __name__ == "__main__":
