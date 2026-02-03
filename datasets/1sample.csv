@@ -1,0 +1,2 @@
+case_dir,clip_stem,json_path,mp4_path,frames_dir,start_frame,end_frame,video_num_frames,video_fps,video_duration_ms,clip_num_frames,split_name
+cholec80_20,16275_16474,/mnt/disk1/haoding/surg_action_data_source/surg_act_raw_stage_1/cholec80_20/annotation/clip_16275_16474.json,/mnt/disk1/haoding/surg_action_data_source/surg_act_raw_stage_1/cholec80_20/clips/clip_16275_16474.mp4,/mnt/disk1/haoding/vlm_data/surg_act_image/cholec80_20_16275_16474,16275,16474,200,25.0,8000,200,train

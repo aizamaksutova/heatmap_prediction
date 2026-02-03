@@ -1,0 +1,7 @@
+torch
+transformers
+peft
+opencv-python
+pillow
+numpy
+tqdm
