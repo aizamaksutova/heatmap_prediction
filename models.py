@@ -55,7 +55,9 @@ class HeatmapHead(nn.Module):
         self.decoder = nn.Sequential(
             nn.Conv2d(head_channels, mid, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(mid, 1, kernel_size=1),
+            nn.Conv2d(mid, mid // 2, kernel_size=1),
+            nn.ReLU(),
+            nn.Conv2d(mid // 2, 1, kernel_size=1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -118,10 +120,14 @@ class MolmoHeatmapModel(nn.Module):
                 task_type=TaskType.CAUSAL_LM,
             )
             self.model = get_peft_model(self.model, lora_config)
-            
-            # Ensure the heatmap head is trainable and in correct precision
-            self.heatmap_head.to(dtype=torch.float32) # Keep head in fp32 for stability
-            self.heatmap_head.train()
+        else:
+            for param in self.model.parameters():
+                param.requires_grad = False
+        
+        self.heatmap_head = HeatmapHead(self.hidden_size, head_channels=head_channels)
+        self.heatmap_head.to(dtype=torch.float32)
+        self.heatmap_head.train()
+
 
     def forward(
         self,

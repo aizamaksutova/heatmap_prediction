@@ -26,7 +26,7 @@ def bce_iou_loss(
         logits,
         targets,
     )
-    probs = torch.sigmoid(logits)
+    probs = torch.sigmoid(logits)  
     iou = soft_iou_loss(probs, targets)
     loss = bce_weight * bce + iou_weight * iou
     return loss, {

@@ -14,10 +14,36 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from molmoact_exps.preprocessing.dataset_vlm import SurgActMolmoDataset
+from dataset_vlm import SurgActMolmoDataset
 
 
 def generate_heatmap_from_polygon(
+    image_shape: tuple[int, int],
+    contact_points: list[dict[str, Any]],
+) -> np.ndarray:
+    """
+    Generates a binary heatmap (0.0 to 1.0) where all pixels inside the
+    polygon are 1.0 and outside are 0.0.
+    """
+    height, width = image_shape
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    if not contact_points:
+        return np.zeros((height, width), dtype=np.float32)
+
+    pts = []
+    for p in contact_points:
+        x, y = p.get("x", 0), p.get("y", 0)
+        pts.append([int(x), int(y)])
+
+    pts = np.array([pts], dtype=np.int32)
+    cv2.fillPoly(mask, pts, 255)
+
+    heatmap = (mask > 0).astype(np.float32)
+    return heatmap
+
+
+def generate_heatmap_from_polygon_distance(
     image_shape: tuple[int, int],
     contact_points: list[dict[str, Any]],
 ) -> np.ndarray:
@@ -43,18 +69,20 @@ def generate_heatmap_from_polygon(
     max_val = dist_map.max()
     if max_val > 0:
         heatmap = dist_map / max_val
+        heatmap = heatmap.astype(np.float32)
+        return heatmap
     else:
-        heatmap = dist_map
-    return heatmap.astype(np.float32)
+        return np.zeros((height, width), dtype=np.float32)
 
 
 @dataclass
 class HeatmapSample:
     image: Image.Image
-    image_path: str
+    orig_image: Image.Image
     image_size: tuple[int, int]
     prompt: str
     heatmap: np.ndarray
+    orig_heatmap: np.ndarray
 
 
 class HeatmapMolmoDataset:
@@ -62,21 +90,39 @@ class HeatmapMolmoDataset:
         self,
         csv_path: str,
         split_name: str | None = None,
+        N: int = 4,
         heatmap_size: tuple[int, int] | None = (224, 224),
     ) -> None:
         self.dataset = SurgActMolmoDataset(csv_path=csv_path, split_name=split_name)
+        self.N = N
         self.heatmap_size = heatmap_size
-
     def __len__(self) -> int:
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> HeatmapSample:
         sample = self.dataset[idx]
         image: Image.Image = sample["image"]
-        width, height = image.size
-        contacts = sample.get("points", {}).get("contacts", [])
-        heatmap = generate_heatmap_from_polygon((height, width), contacts)
+        orig_w, orig_h = image.size
 
+        target_w = int(orig_w / self.N)
+        target_h = int(orig_h / self.N)
+
+        resized_image = image.resize((target_w, target_h), Image.Resampling.BILINEAR)
+
+        scale_x = target_w / orig_w
+        scale_y = target_h / orig_h
+
+        # 3. Adjust the contact point coordinates
+        contacts = sample.get("points", {}).get("contacts", [])
+        orig_heatmap = generate_heatmap_from_polygon((orig_h, orig_w), contacts)
+        scaled_contacts = []
+        for p in contacts:
+            scaled_contacts.append({
+                "x": p.get("x", 0) * scale_x,
+                "y": p.get("y", 0) * scale_y
+            })
+            
+        heatmap = generate_heatmap_from_polygon((target_h, target_w), scaled_contacts)
         if self.heatmap_size is not None:
             heatmap = cv2.resize(
                 heatmap,
@@ -85,11 +131,12 @@ class HeatmapMolmoDataset:
             ).astype(np.float32)
 
         return HeatmapSample(
-            image=image,
-            image_path=sample["image_path"],
-            image_size=(width, height),
+            image=resized_image,  # Now returning the 224x224 image
+            orig_image=image,
+            image_size=(target_w, target_h),
             prompt=sample.get("prompt", ""),
             heatmap=heatmap,
+            orig_heatmap=orig_heatmap,
         )
 
 
@@ -161,6 +208,8 @@ def collate_heatmap_batch(
         "model_inputs": inputs,
         "heatmaps": heatmaps,
         "image_sizes": [s.image_size for s in samples],
-        "image_paths": [s.image_path for s in samples],
         "prompts": prompts,
+        "images": images,
+        "orig_images": [s.orig_image for s in samples],
+        "orig_heatmaps": [s.orig_heatmap for s in samples],
     }
